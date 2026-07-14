@@ -62,16 +62,8 @@ class _MainScreenState extends State<MainScreen> {
 
   // ─── WebSocket ulanish ──────────────────────────────────────────────────────
   Future<void> _connectWebSocket() async {
-    // Web va Windows desktop → localhost, Android/iOS telefon → Wi-Fi IP
-    final String wsUrl;
-    if (kIsWeb) {
-      wsUrl = 'ws://localhost:8080';
-    } else if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-      wsUrl = 'ws://localhost:8080';
-    } else {
-      // Android / iOS — kompyuterning Wi-Fi IP manzili
-      wsUrl = 'ws://10.125.125.234:8080';
-    }
+    // Har doim bulutdagi Railway serverga ulanish
+    final String wsUrl = 'wss://nursingaiapp-production.up.railway.app';
     try {
       _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _wsConnected = true;
@@ -155,7 +147,8 @@ class _MainScreenState extends State<MainScreen> {
             _phase = _parsePhase(stateStr);
             _micState = MicState.idle;
             _statusText = _getIdleStatusText();
-            _aiText = ''; // Keyingi navbat uchun tozalaymiz
+            // _aiText ataylab bu yerda tozalanmaydi, ekranda ko'rinib turishi uchun.
+            // U faqat keyingi gapirish yoki yangi bosqich boshlanganda tozalanadi.
             break;
         }
       });
@@ -199,6 +192,8 @@ class _MainScreenState extends State<MainScreen> {
       _statusText = 'Suhbat boshlanmoqda...';
       _micState = MicState.processing;
       _phase = SessionPhase.intro; // Boshlandi deb belgilaymiz
+      _aiText = '';
+      _userText = '';
     });
 
     _channel?.sink.add(jsonEncode({'type': 'start_session'}));
@@ -230,6 +225,7 @@ class _MainScreenState extends State<MainScreen> {
 
     setState(() {
       _userText = '';
+      _aiText = '';
       _micState = MicState.recording;
       _statusText = 'Eshitilmoqda... (tugmani bosib turing)';
     });
