@@ -139,35 +139,25 @@ async function generateAiResponse(messages, ws) {
             ],
             model: 'llama-3.1-8b-instant',
             stream: true,
-            max_tokens: 300,
+            max_tokens: 1024,
         });
 
-        let fullResponse = '';
-        let sentenceBuffer = '';
-
+        let fullResponse = "";
         for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || '';
+            const content = chunk.choices[0]?.delta?.content || "";
             fullResponse += content;
-            sentenceBuffer += content;
-
             ws.send(JSON.stringify({ type: 'llm_chunk', content }));
-
-            const shouldFlush =
-                /[.?!]\s/.test(sentenceBuffer) ||
-                /[.?!]$/.test(sentenceBuffer) ||
-                sentenceBuffer.length > 80;
-
-            if (shouldFlush) {
-                const textToSpeak = sentenceBuffer.trim();
-                sentenceBuffer = '';
-                if (textToSpeak.length > 3) {
-                    await sendTts(textToSpeak, ws);
-                }
-            }
         }
 
-        if (sentenceBuffer.trim().length > 3) {
-            await sendTts(sentenceBuffer.trim(), ws);
+        // Generate TTS for the AI response
+        if (fullResponse) {
+            const escapedText = fullResponse
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+            await sendTts(escapedText, ws);
         }
 
         return fullResponse.trim();
