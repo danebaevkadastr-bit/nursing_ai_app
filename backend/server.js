@@ -134,6 +134,7 @@ async function generateAiResponse(messages, ws) {
         const stream = await groq.chat.completions.create({
             messages: [
                 { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: 'Salom!' },
                 ...messages
             ],
             model: 'llama3-8b-8192',
@@ -171,7 +172,8 @@ async function generateAiResponse(messages, ws) {
 
         return fullResponse.trim();
     } catch (err) {
-        console.error('Groq xatosi:', err);
+        console.error('Groq xatosi:', err.message || err);
+        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Groq API xatosi'}` }));
         return null;
     }
 }
