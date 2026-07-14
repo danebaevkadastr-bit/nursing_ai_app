@@ -281,8 +281,10 @@ wss.on('connection', (ws) => {
                         ws.send(JSON.stringify({ type: 'transcript', content: transcript }));
                         sessionState = await processUserInput(transcript, conversationHistory, sessionState, ws);
                     } else {
+                        console.log('STT transcript null qaytardi');
                         ws.send(JSON.stringify({ type: 'status', content: 'idle' }));
-                        ws.send(JSON.stringify({ type: 'llm_chunk', content: "Kechirasiz, sizni tushunmadim. Yana bir bor gapirib ko'ring." }));
+                        ws.send(JSON.stringify({ type: 'llm_chunk', content: "Kechirasiz, ovozingizni tushunolmadim. Yana bir bor urinib ko'ring." }));
+                        ws.send(JSON.stringify({ type: 'llm_end', state: sessionState }));
                     }
                 }
             } catch (e) {
