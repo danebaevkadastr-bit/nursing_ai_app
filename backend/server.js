@@ -139,22 +139,40 @@ wss.on('connection', (ws) => {
         }
     }
 
-    // ─── TTS yuborish ────────────────────────────────────────────────────────
+    // ─── TTS yuborish (Azure TTS) ────────────────────────────────────────────────
     async function sendTts(text, ws) {
         try {
-            const ttsResponse = await deepgram.speak.request(
-                { text },
-                { model: 'aura-asteria-en' }
-            );
-            const audioStream = await ttsResponse.getStream();
-            if (audioStream) {
-                const reader = audioStream.getReader();
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    ws.send(value);
-                }
+            const azureKey = process.env.AZURE_TTS_KEY;
+            const region = process.env.AZURE_TTS_REGION || 'eastus';
+            if (!azureKey) {
+                console.error("AZURE_TTS_KEY topilmadi!");
+                return;
             }
+
+            const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
+            const ssml = `<speak version='1.0' xml:lang='uz-UZ'>
+                <voice xml:lang='uz-UZ' xml:gender='Female' name='uz-UZ-MadinaNeural'>
+                    ${text}
+                </voice>
+            </speak>`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Ocp-Apim-Subscription-Key': azureKey,
+                    'Content-Type': 'application/ssml+xml',
+                    'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3'
+                },
+                body: ssml
+            });
+
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Azure xatosi: ${response.status} - ${err}`);
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+            ws.send(Buffer.from(arrayBuffer));
         } catch (err) {
             console.error("TTS xatosi:", err);
         }
