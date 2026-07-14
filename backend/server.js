@@ -5,11 +5,12 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const wss = new WebSocketServer({ port: 8080 });
+const port = process.env.PORT || 8080;
+const wss = new WebSocketServer({ port });
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-console.log("Backend WebSocket Server ishga tushdi (ws://localhost:8080)");
+console.log(`Backend WebSocket Server ishga tushdi (port: ${port})`);
 
 // ─── Suhbat holatlari ────────────────────────────────────────────────────────
 // intro        → AI salomlashadi, user tayyor deydi
