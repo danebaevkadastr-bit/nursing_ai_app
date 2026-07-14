@@ -1,12 +1,13 @@
 const { WebSocketServer } = require('ws');
-const Groq = require('groq-sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const port = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 const AZURE_KEY = process.env.AZURE_TTS_KEY;
 const AZURE_REGION = process.env.AZURE_TTS_REGION || 'eastus';
@@ -131,28 +132,35 @@ async function sendTts(text, ws) {
     }
 }
 
-// ─── AI javob generatsiyasi ───────────────────────────────────────────────────
+// ─── AI javob generatsiyasi (Gemini) ─────────────────────────────────────────
 async function generateAiResponse(messages, ws) {
     try {
-        const stream = await groq.chat.completions.create({
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: 'Salom!' },
-                ...messages
-            ],
-            model: 'llama-3.1-8b-instant',
-            stream: true,
-            max_tokens: 1024,
-        });
-
-        let fullResponse = "";
-        for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || "";
-            fullResponse += content;
-            ws.send(JSON.stringify({ type: 'llm_chunk', content }));
+        // Gemini uchun suhbat tarixini formatlash
+        const history = [];
+        for (let i = 0; i < messages.length - 1; i++) {
+            const m = messages[i];
+            history.push({
+                role: m.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: m.content }],
+            });
         }
 
-        // Generate TTS for the AI response
+        const lastMessage = messages[messages.length - 1];
+        const chat = geminiModel.startChat({
+            history,
+            systemInstruction: SYSTEM_PROMPT,
+        });
+
+        const result = await chat.sendMessageStream(lastMessage.content);
+
+        let fullResponse = '';
+        for await (const chunk of result.stream) {
+            const text = chunk.text();
+            fullResponse += text;
+            ws.send(JSON.stringify({ type: 'llm_chunk', content: text }));
+        }
+
+        // TTS uchun matnni tozalash
         if (fullResponse) {
             const escapedText = fullResponse
                 .replace(/&/g, '&amp;')
@@ -165,8 +173,8 @@ async function generateAiResponse(messages, ws) {
 
         return fullResponse.trim();
     } catch (err) {
-        console.error('Groq xatosi:', err.message || err);
-        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Groq API xatosi'}` }));
+        console.error('Gemini xatosi:', err.message || err);
+        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Gemini API xatosi'}` }));
         return null;
     }
 }
