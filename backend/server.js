@@ -260,6 +260,8 @@ wss.on('connection', (ws) => {
                     ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
 
                     const greeting = "Assalomu alaykum! Men AI hamshirasiman. Bugungi imtihonga xush kelibsiz! Tayyormisiz?";
+                    // Gemini tarix user dan boshlanishi kerak, shuning uchun juft qo'shamiz
+                    conversationHistory.push({ role: 'user', content: 'Assalomu alaykum!' });
                     conversationHistory.push({ role: 'assistant', content: greeting });
 
                     ws.send(JSON.stringify({ type: 'llm_chunk', content: greeting }));
