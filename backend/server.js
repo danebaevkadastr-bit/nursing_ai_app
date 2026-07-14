@@ -28,6 +28,9 @@ Qoidalar:
 - Javoblarni QISQA va ANIQ qil (2-4 gap)
 - Mehribon va rag'batlantiruvchi bo'l
 - Savol berganingda faqat BITTA savol ber
+- HECH QACHON raqam yoki tartib belgisi (1., 2., 1-, 2- va hokazo) ishlatma
+- HECH QACHON ro'yxat (list) shaklida yozma, faqat tabiiy gaplar shaklida yoz
+- Bu audio suhbat, shuning uchun faqat og'zaki nutqqa mos iboralar ishlatilsin
 - Baholashda aniq x/20 format ishlatish: masalan "15/20"`;
 
 // ─── WAV header yaratish (Azure STT uchun) ───────────────────────────────────
