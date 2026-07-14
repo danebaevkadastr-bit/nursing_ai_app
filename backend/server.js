@@ -138,22 +138,37 @@ async function generateAiResponse(messages, ws) {
             throw new Error("QWEN_API_KEY Railway variables'da topilmadi!");
         }
 
-        const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+        const requestBody = JSON.stringify({
+            model: 'qwen-max',
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: 'Salom!' },
+                ...messages
+            ],
+            stream: true
+        });
+
+        let response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${QWEN_API_KEY}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                model: 'qwen-max',
-                messages: [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    { role: 'user', content: 'Salom!' },
-                    ...messages
-                ],
-                stream: true
-            })
+            body: requestBody
         });
+
+        // Agar 401 (Incorrect API Key) qaytsa, xalqaro endpointni sinab ko'ramiz
+        if (response.status === 401) {
+            console.log("Xitoy serveridan 401 qaytdi. Xalqaro (International) serverni sinab ko'ramiz...");
+            response = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${QWEN_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                body: requestBody
+            });
+        }
 
         if (!response.ok) {
             const errText = await response.text();
