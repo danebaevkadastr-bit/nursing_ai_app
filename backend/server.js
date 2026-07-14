@@ -239,8 +239,8 @@ wss.on('connection', (ws) => {
     let isListening = false;
     let audioChunks = [];
 
-    ws.on('message', async (message) => {
-        if (Buffer.isBuffer(message)) {
+    ws.on('message', async (message, isBinary) => {
+        if (isBinary) {
             // Audio baytlar keldi (Push-to-Talk paytida)
             if (isListening) {
                 audioChunks.push(message);
