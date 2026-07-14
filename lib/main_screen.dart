@@ -341,7 +341,7 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
                   // AI matni
-                  if (_aiText.isNotEmpty && isAiSpeaking)
+                  if (_aiText.isNotEmpty)
                     _buildTextBubble(_aiText, isAi: true),
                   // User matni
                   if (_userText.isNotEmpty)
