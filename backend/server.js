@@ -1,5 +1,4 @@
 const { WebSocketServer } = require('ws');
-const { createClient } = require('@deepgram/sdk');
 const Groq = require('groq-sdk');
 const dotenv = require('dotenv');
 
@@ -7,262 +6,256 @@ dotenv.config();
 
 const port = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port });
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const AZURE_KEY = process.env.AZURE_TTS_KEY;
+const AZURE_REGION = process.env.AZURE_TTS_REGION || 'eastus';
 
 console.log(`Backend WebSocket Server ishga tushdi (port: ${port})`);
 
 // ─── Suhbat holatlari ────────────────────────────────────────────────────────
-// intro        → AI salomlashadi, user tayyor deydi
-// main_q       → AI asosiy savol berdi, user javob kutilmoqda
+// not_started  → Suhbat hali boshlanmagan
+// intro        → AI salomlashdi, user tayyor deyishi kutilmoqda
+// main_q       → AI asosiy savol berdi
 // follow_up_1  → AI birinchi qo'shimcha savol berdi
 // follow_up_2  → AI ikkinchi qo'shimcha savol berdi
-// grading      → AI baholaydi (x/20), keyin yangi savolga o'tadi
+// grading      → AI baholadi (x/20)
 // ────────────────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Sen hamshiralik fani bo'yicha og'zaki imtihon o'tkazayotgan mehribon va professional hamshira ustazasan. 
-Suhbatni O'ZBEK TILIDA olib bor. 
+const SYSTEM_PROMPT = `Sen hamshiralik fani bo'yicha og'zaki imtihon o'tkazayotgan mehribon va professional hamshira ustazasan.
+Suhbatni O'ZBEK TILIDA olib bor.
 Qoidalar:
 - Javoblarni QISQA va ANIQ qil (2-4 gap)
 - Mehribon va rag'batlantiruvchi bo'l
 - Savol berganingda faqat BITTA savol ber
 - Baholashda aniq x/20 format ishlatish: masalan "15/20"`;
 
-wss.on('connection', (ws) => {
-    console.log("Yangi mijoz ulandi!");
+// ─── WAV header yaratish (Azure STT uchun) ───────────────────────────────────
+function createWavBuffer(pcmBuffer) {
+    const sampleRate = 16000;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const dataSize = pcmBuffer.length;
+    const header = Buffer.alloc(44);
 
-    // ─── Holat o'zgaruvchilari ───────────────────────────────────────────────
-    let sessionState = 'not_started'; // not_started | intro | main_q | follow_up_1 | follow_up_2 | grading
-    let conversationHistory = [];
-    let isListening = false;
-    let sttConnection = null;
-    let audioBuffer = [];
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);                      // PCM
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(sampleRate * numChannels * bitsPerSample / 8, 28);
+    header.writeUInt16LE(numChannels * bitsPerSample / 8, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
 
-    // ─── STT yaratish funksiyasi ─────────────────────────────────────────────
-    function createSttConnection() {
-        if (sttConnection) {
-            try { sttConnection.finish(); } catch(e) {}
-            sttConnection = null;
-        }
+    return Buffer.concat([header, pcmBuffer]);
+}
 
-        const stt = deepgram.listen.live({
-            model: 'nova-2',
-            language: 'ru', // O'zbek yo'q, rus eng yaqin
-            smart_format: true,
-            endpointing: 500,
-            interim_results: false,
-            utterance_end_ms: 1000,
-        });
-
-        stt.on('open', () => {
-            console.log('Deepgram STT ulandi.');
-            // Buferdagi audio ma'lumotlarni yuborish
-            if (audioBuffer.length > 0) {
-                for (const chunk of audioBuffer) {
-                    if (stt.getReadyState() === 1) stt.send(chunk);
-                }
-                audioBuffer = [];
-            }
-        });
-
-        stt.on('Results', async (data) => {
-            const transcript = data.channel?.alternatives[0]?.transcript;
-            if (transcript && transcript.trim() && data.is_final) {
-                console.log(`[USER]: ${transcript}`);
-                ws.send(JSON.stringify({ type: 'transcript', content: transcript }));
-                await processUserInput(transcript);
-            }
-        });
-
-        stt.on('UtteranceEnd', async (data) => {
-            // Utterance tugadi - bu signal bilan ham ishlov berish mumkin
-        });
-
-        stt.on('error', (err) => {
-            console.error("Deepgram STT xatosi:", err);
-            ws.send(JSON.stringify({ type: 'status', content: 'stt_error' }));
-        });
-
-        stt.on('close', () => {
-            console.log('Deepgram STT yopildi.');
-        });
-
-        return stt;
-    }
-
-    // ─── AI javob generatsiyasi ──────────────────────────────────────────────
-    async function generateAiResponse(messages) {
-        try {
-            const stream = await groq.chat.completions.create({
-                messages: [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    ...messages
-                ],
-                model: 'llama3-8b-8192',
-                stream: true,
-                max_tokens: 300,
-            });
-
-            let fullResponse = "";
-            let sentenceBuffer = "";
-
-            for await (const chunk of stream) {
-                const content = chunk.choices[0]?.delta?.content || "";
-                fullResponse += content;
-                sentenceBuffer += content;
-
-                ws.send(JSON.stringify({ type: 'llm_chunk', content: content }));
-
-                // Gapni TTS ga berish (punkt belgisida)
-                const shouldFlush = /[.?!]\s/.test(sentenceBuffer) ||
-                    /[.?!]$/.test(sentenceBuffer) ||
-                    sentenceBuffer.length > 80;
-
-                if (shouldFlush) {
-                    const textToSpeak = sentenceBuffer.trim();
-                    sentenceBuffer = "";
-                    if (textToSpeak.length > 3) {
-                        await sendTts(textToSpeak, ws);
-                    }
-                }
-            }
-
-            // Qolgan matnni TTS ga berish
-            if (sentenceBuffer.trim().length > 3) {
-                await sendTts(sentenceBuffer.trim(), ws);
-            }
-
-            return fullResponse.trim();
-        } catch (err) {
-            console.error("Groq xatosi:", err);
+// ─── Azure STT ───────────────────────────────────────────────────────────────
+async function transcribeAzure(pcmChunks) {
+    try {
+        const pcmBuffer = Buffer.concat(pcmChunks);
+        if (pcmBuffer.length < 3200) {
+            console.log('Audio juda qisqa, o\'tkazib yuborildi.');
             return null;
         }
-    }
 
-    // ─── TTS yuborish (Azure TTS) ────────────────────────────────────────────────
-    async function sendTts(text, ws) {
-        try {
-            const azureKey = process.env.AZURE_TTS_KEY;
-            const region = process.env.AZURE_TTS_REGION || 'eastus';
-            if (!azureKey) {
-                console.error("AZURE_TTS_KEY topilmadi!");
-                return;
-            }
+        const wavBuffer = createWavBuffer(pcmBuffer);
+        const url = `https://${AZURE_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=uz-UZ&format=simple`;
 
-            const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
-            const ssml = `<speak version='1.0' xml:lang='uz-UZ'>
-                <voice xml:lang='uz-UZ' xml:gender='Female' name='uz-UZ-MadinaNeural'>
-                    ${text}
-                </voice>
-            </speak>`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Ocp-Apim-Subscription-Key': AZURE_KEY,
+                'Content-Type': 'audio/wav; codecs=audio/pcm; samplerate=16000',
+                'Accept': 'application/json'
+            },
+            body: wavBuffer
+        });
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Ocp-Apim-Subscription-Key': azureKey,
-                    'Content-Type': 'application/ssml+xml',
-                    'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3'
-                },
-                body: ssml
-            });
-
-            if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Azure xatosi: ${response.status} - ${err}`);
-            }
-
-            const arrayBuffer = await response.arrayBuffer();
-            ws.send(Buffer.from(arrayBuffer));
-        } catch (err) {
-            console.error("TTS xatosi:", err);
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error(`Azure STT xato: ${response.status} - ${errText}`);
+            return null;
         }
+
+        const result = await response.json();
+        console.log('Azure STT natija:', result);
+
+        if (result.RecognitionStatus === 'Success') {
+            return result.DisplayText;
+        }
+        return null;
+    } catch (err) {
+        console.error('Azure STT xatosi:', err);
+        return null;
     }
+}
 
-    // ─── Foydalanuvchi kiritishini qayta ishlash ─────────────────────────────
-    async function processUserInput(userText) {
-        conversationHistory.push({ role: 'user', content: userText });
+// ─── Azure TTS ───────────────────────────────────────────────────────────────
+async function sendTts(text, ws) {
+    try {
+        const url = `https://${AZURE_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`;
+        const ssml = `<speak version='1.0' xml:lang='uz-UZ'>
+            <voice xml:lang='uz-UZ' xml:gender='Female' name='uz-UZ-MadinaNeural'>
+                ${text}
+            </voice>
+        </speak>`;
 
-        let aiPromptMessages = [...conversationHistory];
-        let nextState = sessionState;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Ocp-Apim-Subscription-Key': AZURE_KEY,
+                'Content-Type': 'application/ssml+xml',
+                'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3'
+            },
+            body: ssml
+        });
 
-        if (sessionState === 'intro') {
-            // User salomlashdi → AI asosiy savolni beradi
-            aiPromptMessages.push({
-                role: 'user',
-                content: '[ICHKI KO\'RSATMA: Foydalanuvchi tayyor. Endi bitta asosiy hamshiralik savolini ber. Savol raqamini aytma.]'
-            });
-            nextState = 'main_q';
-        } else if (sessionState === 'main_q') {
-            // User asosiy savolga javob berdi → Birinchi qo'shimcha savol
-            aiPromptMessages.push({
-                role: 'user',
-                content: '[ICHKI KO\'RSATMA: Foydalanuvchi asosiy savolga javob berdi. Birinchi qo\'shimcha (follow-up) savol ber. Agar javob to\'g\'ri bo\'lsa, chuqurlashtir; xato bo\'lsa, muloyimlik bilan yo\'nalt.]'
-            });
-            nextState = 'follow_up_1';
-        } else if (sessionState === 'follow_up_1') {
-            // User birinchi follow-up ga javob berdi → Ikkinchi qo'shimcha savol
-            aiPromptMessages.push({
-                role: 'user',
-                content: '[ICHKI KO\'RSATMA: Foydalanuvchi javob berdi. Ikkinchi va oxirgi qo\'shimcha (follow-up) savolni ber.]'
-            });
-            nextState = 'follow_up_2';
-        } else if (sessionState === 'follow_up_2') {
-            // User ikkinchi follow-up ga javob berdi → Baholash
-            aiPromptMessages.push({
-                role: 'user',
-                content: '[ICHKI KO\'RSATMA: Barcha javoblarni tahlil qilib, talabaga 1-20 shkalada ball ber. Format: "Bahoingiz: X/20". Qisqacha nima to\'g\'ri/noto\'g\'ri ekanini ayt. Oxirida "Yangi savolga o\'tamizmi?" deb so\'ra.]'
-            });
-            nextState = 'grading';
-        } else if (sessionState === 'grading') {
-            // User yangi savolga rozi → Yangi mavzu boshlash
-            aiPromptMessages = [
-                {
-                    role: 'user',
-                    content: '[ICHKI KO\'RSATMA: Foydalanuvchi yangi savolga tayyor. Yangi, boshqa hamshiralik savolini ber.]'
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`Azure TTS xatosi: ${response.status} - ${err}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        ws.send(Buffer.from(arrayBuffer));
+    } catch (err) {
+        console.error('TTS xatosi:', err);
+    }
+}
+
+// ─── AI javob generatsiyasi ───────────────────────────────────────────────────
+async function generateAiResponse(messages, ws) {
+    try {
+        const stream = await groq.chat.completions.create({
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                ...messages
+            ],
+            model: 'llama3-8b-8192',
+            stream: true,
+            max_tokens: 300,
+        });
+
+        let fullResponse = '';
+        let sentenceBuffer = '';
+
+        for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || '';
+            fullResponse += content;
+            sentenceBuffer += content;
+
+            ws.send(JSON.stringify({ type: 'llm_chunk', content }));
+
+            const shouldFlush =
+                /[.?!]\s/.test(sentenceBuffer) ||
+                /[.?!]$/.test(sentenceBuffer) ||
+                sentenceBuffer.length > 80;
+
+            if (shouldFlush) {
+                const textToSpeak = sentenceBuffer.trim();
+                sentenceBuffer = '';
+                if (textToSpeak.length > 3) {
+                    await sendTts(textToSpeak, ws);
                 }
-            ];
-            conversationHistory = [{ role: 'user', content: userText }];
-            nextState = 'main_q';
+            }
         }
 
-        ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
-
-        const aiResponse = await generateAiResponse(aiPromptMessages);
-
-        if (aiResponse) {
-            conversationHistory.push({ role: 'assistant', content: aiResponse });
-            sessionState = nextState;
-            console.log(`[BOT - ${sessionState}]: ${aiResponse.substring(0, 100)}...`);
+        if (sentenceBuffer.trim().length > 3) {
+            await sendTts(sentenceBuffer.trim(), ws);
         }
 
-        ws.send(JSON.stringify({ type: 'llm_end', state: sessionState }));
+        return fullResponse.trim();
+    } catch (err) {
+        console.error('Groq xatosi:', err);
+        return null;
+    }
+}
+
+// ─── Foydalanuvchi kiritishini qayta ishlash ──────────────────────────────────
+async function processUserInput(userText, conversationHistory, sessionState, ws) {
+    conversationHistory.push({ role: 'user', content: userText });
+
+    let aiPromptMessages = [...conversationHistory];
+    let nextState = sessionState;
+
+    if (sessionState === 'intro') {
+        aiPromptMessages.push({
+            role: 'user',
+            content: "[ICHKI KO'RSATMA: Foydalanuvchi tayyor. Bitta asosiy hamshiralik savolini ber. Savol raqamini aytma.]"
+        });
+        nextState = 'main_q';
+    } else if (sessionState === 'main_q') {
+        aiPromptMessages.push({
+            role: 'user',
+            content: "[ICHKI KO'RSATMA: Birinchi follow-up savol ber. To'g'ri bo'lsa chuqurlashtir, xato bo'lsa muloyimlik bilan yo'nalt.]"
+        });
+        nextState = 'follow_up_1';
+    } else if (sessionState === 'follow_up_1') {
+        aiPromptMessages.push({
+            role: 'user',
+            content: "[ICHKI KO'RSATMA: Ikkinchi va oxirgi follow-up savolni ber.]"
+        });
+        nextState = 'follow_up_2';
+    } else if (sessionState === 'follow_up_2') {
+        aiPromptMessages.push({
+            role: 'user',
+            content: "[ICHKI KO'RSATMA: Barcha javoblarni tahlil qilib 1-20 ball ber. Format: \"Bahoingiz: X/20\". Qisqacha nima to'g'ri/noto'g'ri ekanini ayt. Oxirida \"Yangi savolga o'tamizmi?\" deb so'ra.]"
+        });
+        nextState = 'grading';
+    } else if (sessionState === 'grading') {
+        aiPromptMessages = [{
+            role: 'user',
+            content: "[ICHKI KO'RSATMA: Foydalanuvchi yangi savolga tayyor. Yangi hamshiralik savolini ber.]"
+        }];
+        conversationHistory.length = 0;
+        conversationHistory.push({ role: 'user', content: userText });
+        nextState = 'main_q';
     }
 
-    // ─── WebSocket xabarlari ─────────────────────────────────────────────────
+    ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
+
+    const aiResponse = await generateAiResponse(aiPromptMessages, ws);
+
+    if (aiResponse) {
+        conversationHistory.push({ role: 'assistant', content: aiResponse });
+        console.log(`[BOT - ${nextState}]: ${aiResponse.substring(0, 100)}...`);
+    }
+
+    ws.send(JSON.stringify({ type: 'llm_end', state: nextState }));
+    return nextState;
+}
+
+// ─── WebSocket server ─────────────────────────────────────────────────────────
+wss.on('connection', (ws) => {
+    console.log('Yangi mijoz ulandi!');
+
+    let sessionState = 'not_started';
+    let conversationHistory = [];
+    let isListening = false;
+    let audioChunks = [];
+
     ws.on('message', async (message) => {
         if (Buffer.isBuffer(message)) {
-            // Audio ma'lumotlar
-            if (isListening && sttConnection) {
-                if (sttConnection.getReadyState() === 1) {
-                    sttConnection.send(message);
-                } else {
-                    audioBuffer.push(message);
-                }
+            // Audio baytlar keldi (Push-to-Talk paytida)
+            if (isListening) {
+                audioChunks.push(message);
             }
         } else {
-            // Matnli buyruqlar
             try {
                 const data = JSON.parse(message.toString());
-                console.log("Buyruq:", data.type);
+                console.log('Buyruq:', data.type);
 
                 if (data.type === 'start_session') {
-                    // Birinchi marta suhbat boshlanishi
                     sessionState = 'intro';
                     conversationHistory = [];
 
                     ws.send(JSON.stringify({ type: 'status', content: 'thinking' }));
 
-                    // AI salomlashadi
                     const greeting = "Assalomu alaykum! Men AI hamshirasiman. Bugungi imtihonga xush kelibsiz! Tayyormisiz?";
                     conversationHistory.push({ role: 'assistant', content: greeting });
 
@@ -271,33 +264,34 @@ wss.on('connection', (ws) => {
                     ws.send(JSON.stringify({ type: 'llm_end', state: sessionState }));
 
                 } else if (data.type === 'start_listening') {
-                    // Push-to-talk: user mikrofon tugmasini bosdi
                     isListening = true;
-                    audioBuffer = [];
-                    sttConnection = createSttConnection();
+                    audioChunks = [];
                     ws.send(JSON.stringify({ type: 'status', content: 'listening' }));
 
                 } else if (data.type === 'stop_listening') {
-                    // Push-to-talk: user tugmani qo'yib yubordi
                     isListening = false;
-                    if (sttConnection) {
-                        try {
-                            sttConnection.finish();
-                        } catch(e) {}
-                        sttConnection = null;
-                    }
                     ws.send(JSON.stringify({ type: 'status', content: 'processing' }));
+
+                    // Azure STT orqali ovozni matnga o'girish
+                    const transcript = await transcribeAzure(audioChunks);
+                    audioChunks = [];
+
+                    if (transcript) {
+                        console.log(`[USER]: ${transcript}`);
+                        ws.send(JSON.stringify({ type: 'transcript', content: transcript }));
+                        sessionState = await processUserInput(transcript, conversationHistory, sessionState, ws);
+                    } else {
+                        ws.send(JSON.stringify({ type: 'status', content: 'idle' }));
+                        ws.send(JSON.stringify({ type: 'llm_chunk', content: "Kechirasiz, sizni tushunmadim. Yana bir bor gapirib ko'ring." }));
+                    }
                 }
             } catch (e) {
-                console.error("Xabar parse xatosi:", e);
+                console.error('Xabar parse xatosi:', e);
             }
         }
     });
 
     ws.on('close', () => {
-        console.log("Mijoz uzildi.");
-        if (sttConnection) {
-            try { sttConnection.finish(); } catch(e) {}
-        }
+        console.log('Mijoz uzildi.');
     });
 });
