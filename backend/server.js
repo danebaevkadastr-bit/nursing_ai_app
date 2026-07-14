@@ -148,7 +148,10 @@ async function generateAiResponse(messages, ws) {
         const lastMessage = messages[messages.length - 1];
         const chat = geminiModel.startChat({
             history,
-            systemInstruction: SYSTEM_PROMPT,
+            systemInstruction: {
+                role: 'user',
+                parts: [{ text: SYSTEM_PROMPT }],
+            },
         });
 
         const result = await chat.sendMessageStream(lastMessage.content);
