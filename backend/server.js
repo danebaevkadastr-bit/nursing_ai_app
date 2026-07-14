@@ -1,12 +1,12 @@
 const { WebSocketServer } = require('ws');
-const Groq = require('groq-sdk');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const port = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const QWEN_API_KEY = process.env.QWEN_API_KEY;
 
 const AZURE_KEY = process.env.AZURE_TTS_KEY;
 const AZURE_REGION = process.env.AZURE_TTS_REGION || 'eastus';
@@ -131,25 +131,61 @@ async function sendTts(text, ws) {
     }
 }
 
-// ─── AI javob generatsiyasi (Groq - Qwen-2.5-32b) ───────────────────────────
+// ─── AI javob generatsiyasi (Alibaba Cloud Qwen) ─────────────────────────────
 async function generateAiResponse(messages, ws) {
     try {
-        const stream = await groq.chat.completions.create({
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: 'Salom!' },
-                ...messages
-            ],
-            model: 'qwen-2.5-32b',
-            stream: true,
-            max_tokens: 1024,
+        if (!QWEN_API_KEY) {
+            throw new Error("QWEN_API_KEY Railway variables'da topilmadi!");
+        }
+
+        const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${QWEN_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'qwen-max',
+                messages: [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    { role: 'user', content: 'Salom!' },
+                    ...messages
+                ],
+                stream: true
+            })
         });
 
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Qwen API xatosi: ${response.status} - ${errText}`);
+        }
+
         let fullResponse = "";
-        for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || "";
-            fullResponse += content;
-            ws.send(JSON.stringify({ type: 'llm_chunk', content }));
+        const reader = response.body;
+        let buffer = "";
+        const decoder = new TextDecoder();
+
+        for await (const chunk of reader) {
+            buffer += decoder.decode(chunk);
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // Oxirgi chala qatorni saqlab turamiz
+
+            for (const line of lines) {
+                const cleaned = line.trim();
+                if (!cleaned || cleaned === "data: [DONE]") continue;
+                if (cleaned.startsWith("data: ")) {
+                    try {
+                        const parsed = JSON.parse(cleaned.slice(6));
+                        const text = parsed.choices[0]?.delta?.content || "";
+                        if (text) {
+                            fullResponse += text;
+                            ws.send(JSON.stringify({ type: 'llm_chunk', content: text }));
+                        }
+                    } catch (e) {
+                        // JSON parsing xatolarini tashlab o'tamiz
+                    }
+                }
+            }
         }
 
         // Generate TTS for the AI response
@@ -165,8 +201,8 @@ async function generateAiResponse(messages, ws) {
 
         return fullResponse.trim();
     } catch (err) {
-        console.error('Groq Qwen xatosi:', err.message || err);
-        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Groq Qwen API xatosi'}` }));
+        console.error('Qwen API xatosi:', err.message || err);
+        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Qwen API ulanish xatosi'}` }));
         return null;
     }
 }
