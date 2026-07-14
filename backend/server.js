@@ -184,33 +184,33 @@ async function processUserInput(userText, conversationHistory, sessionState, ws)
     let nextState = sessionState;
 
     if (sessionState === 'intro') {
-        aiPromptMessages.push({
+        aiPromptMessages[aiPromptMessages.length - 1] = {
             role: 'user',
-            content: "[ICHKI KO'RSATMA: Foydalanuvchi tayyor. Bitta asosiy hamshiralik savolini ber. Savol raqamini aytma.]"
-        });
+            content: userText + "\n\n[ICHKI KO'RSATMA: Foydalanuvchi tayyor. Bitta asosiy hamshiralik savolini ber. Savol raqamini aytma.]"
+        };
         nextState = 'main_q';
     } else if (sessionState === 'main_q') {
-        aiPromptMessages.push({
+        aiPromptMessages[aiPromptMessages.length - 1] = {
             role: 'user',
-            content: "[ICHKI KO'RSATMA: Birinchi follow-up savol ber. To'g'ri bo'lsa chuqurlashtir, xato bo'lsa muloyimlik bilan yo'nalt.]"
-        });
+            content: userText + "\n\n[ICHKI KO'RSATMA: Birinchi follow-up savol ber. To'g'ri bo'lsa chuqurlashtir, xato bo'lsa muloyimlik bilan yo'nalt.]"
+        };
         nextState = 'follow_up_1';
     } else if (sessionState === 'follow_up_1') {
-        aiPromptMessages.push({
+        aiPromptMessages[aiPromptMessages.length - 1] = {
             role: 'user',
-            content: "[ICHKI KO'RSATMA: Ikkinchi va oxirgi follow-up savolni ber.]"
-        });
+            content: userText + "\n\n[ICHKI KO'RSATMA: Ikkinchi va oxirgi follow-up savolni ber.]"
+        };
         nextState = 'follow_up_2';
     } else if (sessionState === 'follow_up_2') {
-        aiPromptMessages.push({
+        aiPromptMessages[aiPromptMessages.length - 1] = {
             role: 'user',
-            content: "[ICHKI KO'RSATMA: Barcha javoblarni tahlil qilib 1-20 ball ber. Format: \"Bahoingiz: X/20\". Qisqacha nima to'g'ri/noto'g'ri ekanini ayt. Oxirida \"Yangi savolga o'tamizmi?\" deb so'ra.]"
-        });
+            content: userText + "\n\n[ICHKI KO'RSATMA: Barcha javoblarni tahlil qilib 1-20 ball ber. Format: \"Bahoingiz: X/20\". Qisqacha nima to'g'ri/noto'g'ri ekanini ayt. Oxirida \"Yangi savolga o'tamizmi?\" deb so'ra.]"
+        };
         nextState = 'grading';
     } else if (sessionState === 'grading') {
         aiPromptMessages = [{
             role: 'user',
-            content: "[ICHKI KO'RSATMA: Foydalanuvchi yangi savolga tayyor. Yangi hamshiralik savolini ber.]"
+            content: userText + "\n\n[ICHKI KO'RSATMA: Foydalanuvchi yangi savolga tayyor. Yangi hamshiralik savolini ber.]"
         }];
         conversationHistory.length = 0;
         conversationHistory.push({ role: 'user', content: userText });
