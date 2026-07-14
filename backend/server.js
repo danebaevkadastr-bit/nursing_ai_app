@@ -1,13 +1,12 @@
 const { WebSocketServer } = require('ws');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const port = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 const AZURE_KEY = process.env.AZURE_TTS_KEY;
 const AZURE_REGION = process.env.AZURE_TTS_REGION || 'eastus';
@@ -132,38 +131,28 @@ async function sendTts(text, ws) {
     }
 }
 
-// ─── AI javob generatsiyasi (Gemini) ─────────────────────────────────────────
+// ─── AI javob generatsiyasi (Groq - Qwen-2.5-32b) ───────────────────────────
 async function generateAiResponse(messages, ws) {
     try {
-        // Gemini uchun suhbat tarixini formatlash
-        const history = [];
-        for (let i = 0; i < messages.length - 1; i++) {
-            const m = messages[i];
-            history.push({
-                role: m.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: m.content }],
-            });
-        }
-
-        const lastMessage = messages[messages.length - 1];
-        const chat = geminiModel.startChat({
-            history,
-            systemInstruction: {
-                role: 'user',
-                parts: [{ text: SYSTEM_PROMPT }],
-            },
+        const stream = await groq.chat.completions.create({
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'user', content: 'Salom!' },
+                ...messages
+            ],
+            model: 'qwen-2.5-32b',
+            stream: true,
+            max_tokens: 1024,
         });
 
-        const result = await chat.sendMessageStream(lastMessage.content);
-
-        let fullResponse = '';
-        for await (const chunk of result.stream) {
-            const text = chunk.text();
-            fullResponse += text;
-            ws.send(JSON.stringify({ type: 'llm_chunk', content: text }));
+        let fullResponse = "";
+        for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || "";
+            fullResponse += content;
+            ws.send(JSON.stringify({ type: 'llm_chunk', content }));
         }
 
-        // TTS uchun matnni tozalash
+        // Generate TTS for the AI response
         if (fullResponse) {
             const escapedText = fullResponse
                 .replace(/&/g, '&amp;')
@@ -176,8 +165,8 @@ async function generateAiResponse(messages, ws) {
 
         return fullResponse.trim();
     } catch (err) {
-        console.error('Gemini xatosi:', err.message || err);
-        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Gemini API xatosi'}` }));
+        console.error('Groq Qwen xatosi:', err.message || err);
+        ws.send(JSON.stringify({ type: 'llm_chunk', content: `[XATO]: ${err.message || 'Groq Qwen API xatosi'}` }));
         return null;
     }
 }
