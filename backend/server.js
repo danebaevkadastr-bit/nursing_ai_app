@@ -137,7 +137,7 @@ async function generateAiResponse(messages, ws) {
                 { role: 'user', content: 'Salom!' },
                 ...messages
             ],
-            model: 'llama3-8b-8192',
+            model: 'llama-3.1-8b-instant',
             stream: true,
             max_tokens: 300,
         });
