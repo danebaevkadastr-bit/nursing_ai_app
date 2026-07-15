@@ -58,6 +58,21 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _connectWebSocket();
+
+    _audioPlayer.onPlayerStateChanged.listen((state) {
+      if (state == PlayerState.completed) {
+        _isPlayingAudio = false;
+        if (_micState != MicState.idle) {
+           setState(() {
+             _micState = MicState.idle;
+             _statusText = _getIdleStatusText();
+           });
+        }
+        if (_phase != SessionPhase.notStarted) {
+           _autoStartMic();
+        }
+      }
+    });
   }
 
   // ─── WebSocket ulanish ──────────────────────────────────────────────────────
@@ -140,17 +155,17 @@ class _MainScreenState extends State<MainScreen> {
           case 'llm_chunk':
             final chunk = data['content'] as String? ?? '';
             _aiText += chunk;
-            _micState = MicState.aiSpeaking;
-            _statusText = 'Gapiryapman...';
+            // Matn kelganda og'zi qimirlamasligi uchun aiSpeaking qilmaymiz
             break;
 
           case 'llm_end':
             final stateStr = data['state'] as String? ?? '';
             _phase = _parsePhase(stateStr);
-            _micState = MicState.idle;
-            _statusText = _getIdleStatusText();
-            // AI javobi tugadi — mikrofon avtomatik yoqiladi
-            Future.delayed(const Duration(milliseconds: 300), _autoStartMic);
+            if (!_isPlayingAudio) {
+              _micState = MicState.idle;
+              _statusText = _getIdleStatusText();
+              Future.delayed(const Duration(milliseconds: 300), _autoStartMic);
+            }
             break;
         }
       });
@@ -177,12 +192,20 @@ class _MainScreenState extends State<MainScreen> {
     return 'Tinglanyapti... O\'zbek tilida gapiring';
   }
 
+  bool _isPlayingAudio = false;
+
   // ─── Audio ──────────────────────────────────────────────────────────────────
   Future<void> _playAudio(Uint8List bytes) async {
     try {
+      _isPlayingAudio = true;
+      setState(() {
+        _micState = MicState.aiSpeaking;
+        _statusText = 'Gapiryapman...';
+      });
       await _audioPlayer.play(BytesSource(bytes));
     } catch (e) {
       debugPrint('Audio ijro xatosi: $e');
+      _isPlayingAudio = false;
     }
   }
 
