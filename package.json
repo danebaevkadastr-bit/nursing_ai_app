@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "build": "cd backend && npm install",
-    "start": "cd backend && node server.js"
+    "start": "cd backend && node server_gemini_live.js",
+    "start:old": "cd backend && node server.js"
   }
 }
