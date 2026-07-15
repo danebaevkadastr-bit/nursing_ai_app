@@ -120,13 +120,16 @@ class _MainScreenState extends State<MainScreen> {
             final content = data['content'] as String;
             if (content == 'listening') {
               _micState = MicState.recording;
-              _statusText = 'Eshitilmoqda... (tugmani bosib turing)';
+              _statusText = 'Eshitilmoqda...';
             } else if (content == 'processing') {
               _micState = MicState.processing;
               _statusText = 'Qayta ishlanmoqda...';
             } else if (content == 'thinking') {
               _micState = MicState.aiSpeaking;
               _statusText = 'AI o\'ylayapti...';
+            } else if (content == 'idle') {
+              _micState = MicState.idle;
+              _statusText = _getIdleStatusText();
             }
             break;
 
@@ -142,13 +145,12 @@ class _MainScreenState extends State<MainScreen> {
             break;
 
           case 'llm_end':
-            // Server qaysi bosqichga o'tganini bildiradi
             final stateStr = data['state'] as String? ?? '';
             _phase = _parsePhase(stateStr);
             _micState = MicState.idle;
             _statusText = _getIdleStatusText();
-            // _aiText ataylab bu yerda tozalanmaydi, ekranda ko'rinib turishi uchun.
-            // U faqat keyingi gapirish yoki yangi bosqich boshlanganda tozalanadi.
+            // AI javobi tugadi — mikrofon avtomatik yoqiladi
+            Future.delayed(const Duration(milliseconds: 300), _autoStartMic);
             break;
         }
       });
@@ -184,26 +186,26 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // ─── Suhbatni boshlash (Birinchi tugma bosish) ────────────────────────────
+  // ─── Suhbatni boshlash ───────────────────────────────────────────────────────
   Future<void> _startSession() async {
     if (!_wsConnected || _phase != SessionPhase.notStarted) return;
-
     setState(() {
       _statusText = 'Suhbat boshlanmoqda...';
       _micState = MicState.processing;
-      _phase = SessionPhase.intro; // Boshlandi deb belgilaymiz
+      _phase = SessionPhase.intro;
       _aiText = '';
       _userText = '';
     });
-
     _channel?.sink.add(jsonEncode({'type': 'start_session'}));
   }
 
-  // ─── Push-to-talk: Tugma bosildi ────────────────────────────────────────────
-  Future<void> _onMicPressDown() async {
-    // Faqat suhbat boshlangandan keyin va AI gapirmayotgan paytda
+  // ─── Mikrofon avtomatik yoqish ───────────────────────────────────────────────
+  bool _isMuted = false;
+
+  Future<void> _autoStartMic() async {
+    if (!mounted || !_wsConnected || _isMuted) return;
     if (_phase == SessionPhase.notStarted) return;
-    if (_micState == MicState.aiSpeaking || _micState == MicState.recording) return;
+    if (_micState == MicState.recording) return;
 
     // Mikrofon ruxsatini tekshirish
     if (!kIsWeb) {
@@ -217,29 +219,23 @@ class _MainScreenState extends State<MainScreen> {
       }
     }
 
-    // AI gapirsa, to'xtatamiz
-    await _audioPlayer.stop();
-
-    // Serverga "tinglashni boshlash" signalini yuboramiz
     _channel?.sink.add(jsonEncode({'type': 'start_listening'}));
 
     setState(() {
       _userText = '';
       _aiText = '';
       _micState = MicState.recording;
-      _statusText = 'Eshitilmoqda... (tugmani bosib turing)';
+      _statusText = 'Eshitilmoqda...';
     });
 
-    // Mikrofon yozishni boshlash
     try {
       final stream = await _audioRecorder.startStream(const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
       ));
-
       _recordSub = stream.listen((data) {
-        if (_wsConnected && _channel != null) {
+        if (_wsConnected && _channel != null && !_isMuted) {
           _channel!.sink.add(data);
         }
       });
@@ -252,36 +248,37 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // ─── Push-to-talk: Tugma qo'yib yuborildi ──────────────────────────────────
-  Future<void> _onMicPressUp() async {
-    if (_micState != MicState.recording) return;
+  // ─── Mute/Unmute toggle ──────────────────────────────────────────────────────
+  Future<void> _toggleMute() async {
+    if (_phase == SessionPhase.notStarted) return;
 
-    // Yozishni to'xtatish
-    await _recordSub?.cancel();
-    _recordSub = null;
-    try {
-      await _audioRecorder.stop();
-    } catch (e) {
-      debugPrint('Yozishni to\'xtatish xatosi: $e');
+    if (_isMuted) {
+      // Unmute: mikrofon qayta yoqiladi
+      _isMuted = false;
+      await _autoStartMic();
+    } else {
+      // Mute: mikrofon o'chiriladi
+      _isMuted = true;
+      await _recordSub?.cancel();
+      _recordSub = null;
+      try { await _audioRecorder.stop(); } catch (_) {}
+      _channel?.sink.add(jsonEncode({'type': 'stop_listening'}));
+      setState(() {
+        _micState = MicState.idle;
+        _statusText = 'Mikrofon o\'chirildi (mute)';
+      });
     }
-
-    // Serverga signal
-    _channel?.sink.add(jsonEncode({'type': 'stop_listening'}));
-
-    setState(() {
-      _micState = MicState.processing;
-      _statusText = 'Qayta ishlanmoqda...';
-    });
   }
+
+
 
   // ─── Suhbatni tugatish ────────────────────────────────────────────────────
   Future<void> _endSession() async {
-    // AI ni to'xtatamiz
     await _audioPlayer.stop();
-    // Yozishni to'xtatamiz
-    if (_micState == MicState.recording) {
-      await _onMicPressUp();
-    }
+    _isMuted = false;
+    await _recordSub?.cancel();
+    _recordSub = null;
+    try { await _audioRecorder.stop(); } catch (_) {}
 
     setState(() {
       _phase = SessionPhase.notStarted;
@@ -614,19 +611,19 @@ class _MainScreenState extends State<MainScreen> {
       );
     }
 
-    // Suhbat boshlangan - push-to-talk tugmasi
-    final bool canRecord = !isAiSpeaking && _micState != MicState.processing;
+    // Suhbat boshlangan - Mute/Unmute tugmasi
+    final bool isMuted = _isMuted;
+    final bool isRecording = _micState == MicState.recording;
+    final bool isProcessing = _micState == MicState.processing;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 48, top: 8),
       child: GestureDetector(
-        onTapDown: canRecord ? (_) => _onMicPressDown() : null,
-        onTapUp: (_) => _onMicPressUp(),
-        onTapCancel: () => _onMicPressUp(),
+        onTap: _toggleMute,
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Tashqi halqa animatsiyasi (yozib turish paytida)
+            // Tashqi halqa animatsiyasi
             AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               width: isRecording ? 124 : 100,
@@ -635,7 +632,9 @@ class _MainScreenState extends State<MainScreen> {
                 shape: BoxShape.circle,
                 color: (isRecording
                     ? const Color(0xFFFF4B4B)
-                    : const Color(0xFFFF8FB1))
+                    : isMuted
+                        ? Colors.grey
+                        : const Color(0xFFFF8FB1))
                     .withValues(alpha: isRecording ? 0.22 : 0.15),
               ),
             ),
@@ -649,11 +648,11 @@ class _MainScreenState extends State<MainScreen> {
                 gradient: LinearGradient(
                   colors: isRecording
                       ? [const Color(0xFFFF6B6B), const Color(0xFFE53935)]
-                      : isAiSpeaking
-                          ? [const Color(0xFFCE93D8), const Color(0xFF7B1FA2)]
-                          : canRecord
-                              ? [const Color(0xFFFF9DBE), const Color(0xFFE8527A)]
-                              : [Colors.grey.shade300, Colors.grey.shade500],
+                      : isMuted
+                          ? [Colors.grey.shade400, Colors.grey.shade600]
+                          : isAiSpeaking
+                              ? [const Color(0xFFCE93D8), const Color(0xFF7B1FA2)]
+                              : [const Color(0xFFFF9DBE), const Color(0xFFE8527A)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
@@ -661,7 +660,9 @@ class _MainScreenState extends State<MainScreen> {
                   BoxShadow(
                     color: (isRecording
                         ? const Color(0xFFFF4B4B)
-                        : const Color(0xFFE8527A))
+                        : isMuted
+                            ? Colors.grey
+                            : const Color(0xFFE8527A))
                         .withValues(alpha: 0.42),
                     blurRadius: isRecording ? 32 : 20,
                     spreadRadius: isRecording ? 6 : 2,
@@ -669,41 +670,42 @@ class _MainScreenState extends State<MainScreen> {
                   ),
                 ],
               ),
-              child: _micState == MicState.processing
+              child: isProcessing
                   ? const Padding(
                       padding: EdgeInsets.all(20),
                       child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                     )
                   : Icon(
-                      isRecording
-                          ? Icons.mic
-                          : isAiSpeaking
-                              ? Icons.volume_up_rounded
-                              : Icons.mic_none_rounded,
+                      isMuted
+                          ? Icons.mic_off_rounded
+                          : isRecording
+                              ? Icons.mic
+                              : isAiSpeaking
+                                  ? Icons.volume_up_rounded
+                                  : Icons.mic_none_rounded,
                       color: Colors.white,
                       size: 34,
                     ),
             ),
-            // "Bosib turing" matni
-            if (!isRecording && !isAiSpeaking && canRecord)
-              Positioned(
-                bottom: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE8527A).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text(
-                    'Bosib turing',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFE8527A),
-                    ),
+            // Pastdagi matn
+            Positioned(
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8527A).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  isMuted ? 'Mute (bosing)' : isRecording ? 'Tinglanyapti...' : 'Tayyor',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFE8527A),
                   ),
                 ),
               ),
+            ),
           ],
         ),
       ),
