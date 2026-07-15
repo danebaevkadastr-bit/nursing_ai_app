@@ -94,7 +94,7 @@ wss.on('connection', (clientWs) => {
                         responseModalities: ['AUDIO'],
                         speechConfig: {
                             voiceConfig: {
-                                prebuiltVoiceConfig: { voiceName: 'Puck' }
+                                prebuiltVoiceConfig: { voiceName: 'Aoede' }
                             }
                         }
                     },
