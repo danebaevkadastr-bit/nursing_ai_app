@@ -61,11 +61,21 @@ class _AnimatedNurseFaceState extends State<AnimatedNurseFace>
     }
   }
 
+  void _startSpeakingRandomly() async {
+    while (mounted && widget.isSpeaking) {
+      final target = 0.2 + math.Random().nextDouble() * 0.8;
+      final duration = 80 + math.Random().nextInt(100);
+      await _speakingController.animateTo(target, duration: Duration(milliseconds: duration));
+      if (!mounted || !widget.isSpeaking) break;
+      await _speakingController.animateTo(0.1 + math.Random().nextDouble() * 0.3, duration: Duration(milliseconds: duration));
+    }
+  }
+
   @override
   void didUpdateWidget(AnimatedNurseFace oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isSpeaking && !oldWidget.isSpeaking) {
-      _speakingController.repeat(reverse: true);
+      _startSpeakingRandomly();
     } else if (!widget.isSpeaking && oldWidget.isSpeaking) {
       _speakingController.animateTo(
         0,

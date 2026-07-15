@@ -120,13 +120,13 @@ class _MainScreenState extends State<MainScreen> {
             final content = data['content'] as String;
             if (content == 'listening') {
               _micState = MicState.recording;
-              _statusText = 'Eshitilmoqda...';
+              _statusText = 'Tinglayapman...';
             } else if (content == 'processing') {
               _micState = MicState.processing;
-              _statusText = 'Qayta ishlanmoqda...';
+              _statusText = 'O\'ylanyapman...';
             } else if (content == 'thinking') {
-              _micState = MicState.aiSpeaking;
-              _statusText = 'AI o\'ylayapti...';
+              _micState = MicState.processing;
+              _statusText = 'O\'ylanyapman...';
             } else if (content == 'idle') {
               _micState = MicState.idle;
               _statusText = _getIdleStatusText();
@@ -141,7 +141,7 @@ class _MainScreenState extends State<MainScreen> {
             final chunk = data['content'] as String? ?? '';
             _aiText += chunk;
             _micState = MicState.aiSpeaking;
-            _statusText = 'AI gapirmoqda...';
+            _statusText = 'Gapiryapman...';
             break;
 
           case 'llm_end':
