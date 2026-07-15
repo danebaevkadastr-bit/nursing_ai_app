@@ -62,14 +62,16 @@ class _MainScreenState extends State<MainScreen> {
     _audioPlayer.onPlayerStateChanged.listen((state) {
       if (state == PlayerState.completed) {
         _isPlayingAudio = false;
-        if (_micState != MicState.idle) {
+        if (!_isMuted && _phase != SessionPhase.notStarted) {
+           setState(() {
+             _micState = MicState.recording;
+             _statusText = 'Tinglayapman...';
+           });
+        } else {
            setState(() {
              _micState = MicState.idle;
-             _statusText = _getIdleStatusText();
+             _statusText = _isMuted ? 'Mikrofon o\'chirildi (mute)' : _getIdleStatusText();
            });
-        }
-        if (_phase != SessionPhase.notStarted) {
-           _autoStartMic();
         }
       }
     });
@@ -162,9 +164,13 @@ class _MainScreenState extends State<MainScreen> {
             final stateStr = data['state'] as String? ?? '';
             _phase = _parsePhase(stateStr);
             if (!_isPlayingAudio) {
-              _micState = MicState.idle;
-              _statusText = _getIdleStatusText();
-              Future.delayed(const Duration(milliseconds: 300), _autoStartMic);
+              if (!_isMuted) {
+                _micState = MicState.recording;
+                _statusText = 'Tinglayapman...';
+              } else {
+                _micState = MicState.idle;
+                _statusText = 'Mikrofon o\'chirildi (mute)';
+              }
             }
             break;
         }
@@ -220,15 +226,15 @@ class _MainScreenState extends State<MainScreen> {
       _userText = '';
     });
     _channel?.sink.add(jsonEncode({'type': 'start_session'}));
+    await _startMicStream();
   }
 
-  // ─── Mikrofon avtomatik yoqish ───────────────────────────────────────────────
+  // ─── Mikrofon doimiy yoqish (Stream) ───────────────────────────────────────
   bool _isMuted = false;
 
-  Future<void> _autoStartMic() async {
-    if (!mounted || !_wsConnected || _isMuted) return;
-    if (_phase == SessionPhase.notStarted) return;
-    if (_micState == MicState.recording) return;
+  Future<void> _startMicStream() async {
+    if (!mounted || !_wsConnected) return;
+    if (_recordSub != null) return; // Allaqachon yoniq
 
     // Mikrofon ruxsatini tekshirish
     if (!kIsWeb) {
@@ -243,12 +249,9 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     _channel?.sink.add(jsonEncode({'type': 'start_listening'}));
-
     setState(() {
-      _userText = '';
-      _aiText = '';
       _micState = MicState.recording;
-      _statusText = 'Eshitilmoqda...';
+      _statusText = 'Tinglayapman...';
     });
 
     try {
@@ -258,7 +261,8 @@ class _MainScreenState extends State<MainScreen> {
         numChannels: 1,
       ));
       _recordSub = stream.listen((data) {
-        if (_wsConnected && _channel != null && !_isMuted) {
+        // Faqat mute emas bo'lsa va AI gapirmayotgan bo'lsa yuboramiz
+        if (_wsConnected && _channel != null && !_isMuted && !_isPlayingAudio) {
           _channel!.sink.add(data);
         }
       });
@@ -275,22 +279,18 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _toggleMute() async {
     if (_phase == SessionPhase.notStarted) return;
 
-    if (_isMuted) {
-      // Unmute: mikrofon qayta yoqiladi
-      _isMuted = false;
-      await _autoStartMic();
-    } else {
-      // Mute: mikrofon o'chiriladi
-      _isMuted = true;
-      await _recordSub?.cancel();
-      _recordSub = null;
-      try { await _audioRecorder.stop(); } catch (_) {}
-      _channel?.sink.add(jsonEncode({'type': 'stop_listening'}));
-      setState(() {
-        _micState = MicState.idle;
-        _statusText = 'Mikrofon o\'chirildi (mute)';
-      });
-    }
+    setState(() {
+      _isMuted = !_isMuted;
+      if (!_isPlayingAudio) {
+        if (_isMuted) {
+          _micState = MicState.idle;
+          _statusText = 'Mikrofon o\'chirildi (mute)';
+        } else {
+          _micState = MicState.recording;
+          _statusText = 'Tinglayapman...';
+        }
+      }
+    });
   }
 
 
