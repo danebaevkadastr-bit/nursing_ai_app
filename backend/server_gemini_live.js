@@ -92,18 +92,14 @@ wss.on('connection', (clientWs) => {
                     model: 'models/gemini-2.0-flash-exp',
                     generationConfig: {
                         responseModalities: ['AUDIO'],
-                        thinkingConfig: { thinkingLevel: 'minimal' },
                         speechConfig: {
-                            languageCode: 'de-DE',   // O'zbek aksenti uchun eng yaxshi tanlov
                             voiceConfig: {
                                 prebuiltVoiceConfig: { voiceName: 'Puck' }
                             }
                         }
                     },
                     realtimeInputConfig: {
-                        automaticActivityDetection: {
-                            disabled: true  // Push-to-talk: biz boshqaramiz
-                        }
+                        automaticActivityDetection: {}
                     },
                     systemInstruction: {
                         parts: [{ text: SYSTEM_PROMPT }]
@@ -264,27 +260,15 @@ wss.on('connection', (clientWs) => {
             else if (data.type === 'start_listening') {
                 isListening = true;
                 geminiAudioChunks = [];
-
-                // Activity boshlangani haqida Gemini ga xabar
-                if (geminiWs?.readyState === WebSocket.OPEN) {
-                    geminiWs.send(JSON.stringify({
-                        realtimeInput: { activityStart: {} }
-                    }));
-                }
+                // VAD avtomatik aniqlaydi — activityStart shart emas
                 clientWs.send(JSON.stringify({ type: 'status', content: 'listening' }));
             }
 
             // ─── Tinglashni to'xtatish ────────────────────────────────────────
             else if (data.type === 'stop_listening') {
                 isListening = false;
-                clientWs.send(JSON.stringify({ type: 'status', content: 'processing' }));
-
-                // Activity tugadi — Gemini javob bersin
-                if (geminiWs?.readyState === WebSocket.OPEN) {
-                    geminiWs.send(JSON.stringify({
-                        realtimeInput: { activityEnd: {} }
-                    }));
-                }
+                // VAD o'zi turn_complete ni boshqaradi
+                clientWs.send(JSON.stringify({ type: 'status', content: 'idle' }));
             }
 
         } catch (e) {
