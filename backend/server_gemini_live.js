@@ -215,10 +215,10 @@ wss.on('connection', (clientWs) => {
                 const base64Audio = message.toString('base64');
                 geminiWs.send(JSON.stringify({
                     realtimeInput: {
-                        audio: {
+                        mediaChunks: [{
                             mimeType: 'audio/pcm;rate=16000',
                             data: base64Audio
-                        }
+                        }]
                     }
                 }));
             }

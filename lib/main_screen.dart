@@ -174,7 +174,7 @@ class _MainScreenState extends State<MainScreen> {
     if (_phase == SessionPhase.grading) {
       return 'Baholash tugadi. Yangi savol uchun gapiring';
     }
-    return 'Mikrofon tugmasini bosib turing va gapiring';
+    return 'Tinglanyapti... O\'zbek tilida gapiring';
   }
 
   // ─── Audio ──────────────────────────────────────────────────────────────────
@@ -337,12 +337,7 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ),
                   ),
-                  // AI matni
-                  if (_aiText.isNotEmpty)
-                    _buildTextBubble(_aiText, isAi: true),
-                  // User matni
-                  if (_userText.isNotEmpty)
-                    _buildTextBubble(_userText, isAi: false),
+                  // Matnlar yashirildi (faqat ovozli suhbat)
                   _buildStatusLabel(),
                   _buildBottomBar(
                     sessionStarted: sessionStarted,
